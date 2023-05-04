@@ -2,12 +2,16 @@ import json
 import re
 
 import pandas as pd
-import urllib3
 from bs4 import BeautifulSoup
+from gazpacho import Soup, get
+from retry import retry
 from tqdm.auto import tqdm
 
+# from typing import deprecated
+
+
 URLMAP_FILE = "./investopedia_all_urls.json"
-CONTENT_FILE = "./investopedia.csv"
+CONTENT_FILE = "./../data/investopedia.csv"
 
 
 def clean_content(content: str) -> str:
@@ -18,23 +22,25 @@ def clean_content(content: str) -> str:
     return cln_text
 
 
-def extract_content(page):
-    # topic, url = url_tup
-    # page = urlopen(url)
-    html = page.data.decode("utf-8")
-    soup = BeautifulSoup(html, "html.parser")
-
+@retry(tries=10, delay=5)
+def gazpacho_extract_content(url):
+    page = get(url)
+    soup = Soup(page)
     div_pattern = "mntl-sc-page_1-0"
     div = soup.find("div", {"id": div_pattern})
-    content = div.get_text()
+    question = div.text
+
+    s = BeautifulSoup(page, "html.parser")
+    d = s.find("div", {"id": div_pattern})
+    content = d.get_text()
 
     cln_content = clean_content(content)
 
-    return cln_content
+    return question, cln_content
 
 
 def save_content(topic2text):
-    df = pd.DataFrame(topic2text, columns=["Topic", "Text"])
+    df = pd.DataFrame(topic2text, columns=["Topic", "Question", "Text"])
     df["DocID"] = df.index
     df.to_csv(CONTENT_FILE, index=False)
     print("content saved successfully")
@@ -43,7 +49,7 @@ def save_content(topic2text):
 def main():
     topic2text = []
     url_tups = []
-    http = urllib3.PoolManager()
+    # http = urllib3.PoolManager()
     # load url map
     with open(URLMAP_FILE, "r") as f:
         url_map = json.load(f)
@@ -56,17 +62,12 @@ def main():
 
     print("total topics: ", len(url_tups))
 
-    print("getting source pages...")
-    topic2page = []
-    for topic, url in tqdm(url_tups, total=len(url_tups)):
-        print(url)
-        topic2page.append((topic, http.request("GET", url)))
-
-    print("extratcing page content...")
-    topic2text = [
-        (topic, extract_content(page))
-        for topic, page in tqdm(topic2page, total=len(topic2page))
-    ]
+    topic2text = []
+    pbar = tqdm(url_tups, smoothing=0.9)
+    for topic, url in pbar:
+        pbar.set_description(topic[:20] + "...")
+        question, text = gazpacho_extract_content(url)
+        topic2text.append((topic, question, text))
 
     save_content(topic2text)
 

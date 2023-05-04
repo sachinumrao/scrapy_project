@@ -1,2 +1,2 @@
 # scrapy_project
-Using scrapy to scrape web data
+Using gazpacho to scrape web data
